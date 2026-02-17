@@ -27,3 +27,7 @@ project1
 *.a
 *.so
 *.dylib
+
+# ---- Images ----
+*.jpg
+*.png
