@@ -2,6 +2,7 @@
     Hyuk Jin Chung
     2/16/2026
     Displays live video by looping over frames and creates a segmented binary image (background/foreground)
+    -i flag (with an image filename) can be set to analyze an image instead of a video feed
 */
 
 #include <cstdio>
@@ -124,43 +125,75 @@ uchar kmeans_threshold(cv::Mat &src)
 
 int main(int argc, char *argv[])
 {
-    cv::VideoCapture *capdev;
+    cv::VideoCapture *capdev = nullptr;
+    cv::Mat src, dst;             // initial RGB frame and final binary image
+    cv::Mat hsv, blur, intensity; // hsv, Gaussian blur, saturation darkened image
+    bool image_mode = false;      // default is video mode
+    char *img_filepath = nullptr;
 
-    // open the video device (0 uses the default camera on the device)
-    capdev = new cv::VideoCapture(0);
-    if (!capdev->isOpened())
+    // used for saving the output image
+    int image_counter = 1;
+    char filename[256];
+
+    // parse image filepath if exists
+    for (int i = 1; i < argc; i++)
     {
-        printf("Unable to open video device\n");
-        return (-1);
+        // Check for "-i" flag followed by a filename
+        if (strcmp(argv[i], "-i") == 0 && i + 1 < argc)
+        {
+            image_mode = true;
+            img_filepath = argv[i + 1];
+            printf("Image Mode Enabled. Loading: %s\n", img_filepath);
+            i++; // Skip the filename in the loop
+        }
     }
 
-    // get size properties of the image
-    cv::Size refS((int)capdev->get(cv::CAP_PROP_FRAME_WIDTH),
-                  (int)capdev->get(cv::CAP_PROP_FRAME_HEIGHT));
-    printf("Expected size: %d x %d\n", refS.width, refS.height);
+    // initialize the source (camera or image)
+    if (image_mode)
+    {
+        src = cv::imread(img_filepath);
+        if (src.empty())
+        {
+            printf("Error: Could not load image %s\n", img_filepath);
+            return -1;
+        }
+    }
+    else
+    {
+        // open the video device (0 uses the default camera on the device)
+        capdev = new cv::VideoCapture(0);
+        if (!capdev->isOpened())
+        {
+            printf("Unable to open video device\n");
+            return (-1);
+        }
 
-    cv::namedWindow("Live Video", cv::WINDOW_AUTOSIZE);      // original video feed
-    cv::namedWindow("Intensity Video", cv::WINDOW_AUTOSIZE); // intensity (saturation darkened) feed
-    cv::namedWindow("Binary Video", cv::WINDOW_AUTOSIZE);    // binary image feed
-    cv::Mat src;                                             // initial RGB frame
-    cv::Mat hsv;                                             // hsv frame
-    cv::Mat blur;                                            // Gaussian blur frame
-    cv::Mat intensity;                                       // saturation darkened image
-    cv::Mat dst;                                             // final frame to be displayed
+        // get size properties of the image
+        cv::Size refS((int)capdev->get(cv::CAP_PROP_FRAME_WIDTH),
+                      (int)capdev->get(cv::CAP_PROP_FRAME_HEIGHT));
+        printf("Expected size: %d x %d\n", refS.width, refS.height);
+    }
+
+    cv::namedWindow("Input", cv::WINDOW_AUTOSIZE); // original video feed
+    // cv::namedWindow("Intensity Output", cv::WINDOW_AUTOSIZE); // intensity (saturation darkened) feed
+    cv::namedWindow("Binary Output", cv::WINDOW_AUTOSIZE); // binary image feed
 
     for (;;) // infinite loop until break
     {
-        *capdev >> src; // get a new frame from the camera, treat as a stream
-        if (src.empty())
+        // only for video mode
+        if (!image_mode)
         {
-            printf("Frame is empty\n");
-            break;
+            *capdev >> src; // get a new frame from the camera, treat as a stream
+            if (src.empty())
+            {
+                printf("Frame is empty\n");
+                break;
+            }
         }
 
         // applies a 5x5 Gaussian blur and converts the image to HSV
         cv::GaussianBlur(src, blur, cv::Size(5, 5), 0);
         cv::cvtColor(blur, hsv, cv::COLOR_BGR2HSV);
-
         // darken the saturated parts of the image to allow for easier thresholding
         darken(hsv, intensity);
 
@@ -171,16 +204,25 @@ int main(int argc, char *argv[])
         // create a binary image using a threshold
         binImage(intensity, threshold, dst);
 
-        cv::imshow("Live Video", src);
-        cv::imshow("Intensity Video", intensity);
-        cv::imshow("Binary Video", dst);
+        cv::imshow("Input", src);
+        // cv::imshow("Intensity Output", intensity);
+        cv::imshow("Binary Output", dst);
 
         // see if there is a waiting keystroke
         char key = cv::waitKey(1);
         if (key == 'q')
             break;
+        else if (key == 's')
+        {
+            // save result if 's' is pressed
+            snprintf(filename, sizeof(filename), "binary_result%03d.jpg", image_counter);
+            cv::imwrite(filename, dst);
+            printf("Saved %s\n", filename);
+        }
     }
 
-    delete capdev;
+    if (capdev)
+        delete capdev;
+    cv::destroyAllWindows();
     return (0);
 }
