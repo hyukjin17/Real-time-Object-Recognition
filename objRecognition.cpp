@@ -122,6 +122,93 @@ uchar kmeans_threshold(cv::Mat &src)
     return (uchar)((m1 + m2) / 2.0f);
 }
 
+// Uses the histogram of intensity values to find the 3 means (foreground, shadow and background)
+// Threshold is defined as the average of the foreground and shadow (for darker lighting conditions)
+// Returns threshold value (uchar)
+uchar kmeans3_threshold(cv::Mat &src)
+{
+    // set initial means
+    float m1 = 0.0f;
+    float m2 = 255.0f;
+    float m3 = 127.0f;
+    int hist[256] = {0};
+    int maxIterations = 20;
+
+    // create histogram of 256 intensity values
+    for (int i = 0; i < src.rows; i++)
+    {
+        uchar *ptr = src.ptr<uchar>(i);
+        for (int j = 0; j < src.cols; j++)
+        {
+            hist[ptr[j]]++;
+        }
+    }
+
+    // only repeat until the means are found OR max iterations is reached
+    for (int i = 0; i < maxIterations; i++)
+    {
+        float sum1 = 0, count1 = 0;
+        float sum2 = 0, count2 = 0;
+        float sum3 = 0, count3 = 0;
+
+        // for every histogram bin (intensity level)
+        for (int j = 0; j < 256; j++)
+        {
+            if (hist[i] == 0)
+                continue; // skip empty bins
+
+            // 1D distance metric
+            float d1 = std::abs(i - m1);
+            float d2 = std::abs(i - m2);
+            float d3 = std::abs(i - m3);
+
+            if (d1 <= d2 && d1 <= d3) // closer to m1
+            {
+                sum1 += i * hist[i]; // Sum of all pixel values
+                count1 += hist[i];   // Total count
+            }
+            else if (d2 <= d1 && d2 <= d3) // closer to m2
+            {
+                sum2 += i * hist[i];
+                count2 += hist[i];
+            }
+            else // closer to m3
+            {
+                sum3 += i * hist[i];
+                count3 += hist[i];
+            }
+        }
+
+        // calculate the new means
+        // sum of all pixel values / # of pixels = new means
+        float new_m1 = (count1 > 0) ? sum1 / count1 : m1;
+        float new_m2 = (count2 > 0) ? sum2 / count2 : m2;
+        float new_m3 = (count3 > 0) ? sum3 / count3 : m3;
+
+        // break if means converge
+        if (std::abs(new_m1 - m1) < 0.5f && std::abs(new_m2 - m2) < 0.5f && std::abs(new_m3 - m3) < 0.5f)
+        {
+            m1 = new_m1;
+            m2 = new_m2;
+            m3 = new_m3;
+            break;
+        }
+
+        // update means
+        m1 = new_m1;
+        m2 = new_m2;
+        m3 = new_m3;
+    }
+
+    // if the image is perfectly lit (no shadows), m1 and m3 might merge.
+    if (std::abs(m1 - m3) < 10) {
+        // Fallback: if object and shadow merge, cut between them and background
+        return (uchar)((m1 + m2) / 2.0f);
+    }
+
+    // return the midpoint of the two means
+    return (uchar)((m1 + m3) / 2.0f);
+}
 
 int main(int argc, char *argv[])
 {
