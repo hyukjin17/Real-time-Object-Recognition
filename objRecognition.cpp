@@ -177,9 +177,9 @@ int main(int argc, char *argv[])
         printf("Expected size: %d x %d\n", refS.width, refS.height);
     }
 
-    cv::namedWindow("Input", cv::WINDOW_AUTOSIZE); // original video feed
+    cv::namedWindow("Input", cv::WINDOW_AUTOSIZE);            // original video feed
     cv::namedWindow("Intensity Output", cv::WINDOW_AUTOSIZE); // intensity (saturation darkened) feed
-    cv::namedWindow("Binary Output", cv::WINDOW_AUTOSIZE); // binary image feed
+    cv::namedWindow("Binary Output", cv::WINDOW_AUTOSIZE);    // binary image feed
 
     for (;;) // infinite loop until break
     {
@@ -207,6 +207,11 @@ int main(int argc, char *argv[])
         // create a binary image using a threshold
         binImage(intensity, threshold, dst);
 
+        // 5x5 kernel for the morphological operations
+        cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        cv::morphologyEx(dst, dst, cv::MORPH_OPEN, element);  // remove noise
+        cv::morphologyEx(dst, dst, cv::MORPH_CLOSE, element); // remove holes
+
         cv::imshow("Input", src);
         cv::imshow("Intensity Output", intensity);
         cv::imshow("Binary Output", dst);
@@ -217,7 +222,7 @@ int main(int argc, char *argv[])
             break;
         else if (key == 's')
         {
-            // save result if 's' is pressed
+            // save binary image result if 's' is pressed
             snprintf(filename, sizeof(filename), "binary_result%03d.jpg", image_counter);
             cv::imwrite(filename, dst);
             printf("Saved %s\n", filename);
