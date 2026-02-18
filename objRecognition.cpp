@@ -1,13 +1,112 @@
-/*
-    Hyuk Jin Chung
-    2/16/2026
-    Displays live video by looping over frames and creates a segmented binary image (background/foreground)
-    -i flag (with an image filename) can be set to analyze an image instead of a video feed
-*/
+/**
+ * Hyuk Jin Chung
+ * 2/16/2026
+ * Displays live video by looping over frames and creates a segmented binary image (background/foreground)
+ * -i flag (with an image filename) can be set to analyze an image instead of a video feed
+ */
 
 #include <cstdio>
 #include <cstdlib>
 #include "opencv2/opencv.hpp"
+
+// A struct to hold computed features
+struct RegionFeatures
+{
+    cv::Point2d centroid;
+    double orientation;    // Angle in degrees (0-180)
+    double percent_filled; // Ratio of object area to bounding box area
+    double aspect_ratio;   // Ratio of width/height (always stays between 0 and 1)
+};
+
+// A struct to hold region data for recognition later
+struct Region
+{
+    int id; // valid regions
+    int area;
+    cv::Vec3b color;
+};
+
+// Global color palette (so colors don't flicker/change randomly every frame)
+std::vector<cv::Vec3b> color_palette;
+
+// Initializes a random color palette of 256 colors (only does this once at the start of the program)
+void init_colors()
+{
+    if (!color_palette.empty())
+        return;
+    cv::RNG rng(12345); // arbitrary fixed seed for consistency
+    for (int i = 0; i < 256; i++)
+    {
+        color_palette.push_back(cv::Vec3b(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255)));
+    }
+}
+
+// Comparator for sorting regions (descending order by area)
+bool compareRegionsByArea(const Region &a, const Region &b)
+{
+    return a.area > b.area;
+}
+
+/**
+ * Performs Connected Components Analysis (CCA)
+ * Filters out small regions and regions touching the border, and visualizes the remaining ones
+ * Returns a list of valid Regions sorted by size (largest first)
+ */
+std::vector<Region> findRegions(cv::Mat &binary_img, cv::Mat &dst_colored, cv::Mat &features, int min_area)
+{
+    // initialize the color palette with 256 random colors
+    init_colors();
+
+    cv::Mat labels, stats, centroids;
+    // extract region map from segmented binary image (8-connected, signed int)
+    int num_labels = cv::connectedComponentsWithStats(binary_img, labels, stats, centroids, 8, CV_32S);
+
+    std::vector<Region> valid_regions;
+
+    // Create a black output image
+    dst_colored = cv::Mat::zeros(binary_img.size(), CV_8UC3);
+    int region_count = 1; // valid region counter
+
+    // loop through all found regions (skip background ID 0)
+    for (int i = 1; i < num_labels; i++)
+    {
+        // extract stats for every region
+        int area = stats.at<int>(i, cv::CC_STAT_AREA);
+        int top = stats.at<int>(i, cv::CC_STAT_TOP);
+        int left = stats.at<int>(i, cv::CC_STAT_LEFT);
+        int width = stats.at<int>(i, cv::CC_STAT_WIDTH);
+        int height = stats.at<int>(i, cv::CC_STAT_HEIGHT);
+
+        // ignore small regions or regions touching the image boundary
+        if (area < min_area || top <= 2 || left <= 2 || (left + width) >= binary_img.cols - 2 || (top + height) >= binary_img.rows - 2)
+            continue;
+
+        // store region data
+        Region r;
+        r.id = region_count++; // post-increment the valid region counter
+        r.area = area;
+        r.color = color_palette[i % 255]; // assign color based on region ID (modulo in case there are > 256 regions)
+
+        valid_regions.push_back(r);
+
+        // create a region mask just for this region to be passed into the feature extractor
+        cv::Mat region_mask = (labels == i);
+        // creates a binary image where only pixels with matching region_id are white (on a black background)
+
+        // compute centroid
+        cv::Point2d centroid = cv::Point2d(centroids.at<double>(i, 0), centroids.at<double>(i, 1));
+
+        // compute features for every valid region
+        RegionFeatures feats = compute_region_features(region_mask, centroid, features);
+
+        dst_colored.setTo(r.color, region_mask); // use the region mask to color the region
+    }
+
+    // sort regions by area (descending order, largest first)
+    std::sort(valid_regions.begin(), valid_regions.end(), compareRegionsByArea);
+
+    return valid_regions;
+}
 
 // Converts the hsv image into a greyscale image with saturation darkening for easier segmentation
 // Subtracts the Saturation from the Value to make colorful objects darker (only background should be white)
@@ -25,10 +124,11 @@ void darken(cv::Mat &src, cv::Mat &dst)
         {
             // square the normalized saturation to avoid darkening shadows on white background
             // allows the program to segment the object better (not count the shadow as object)
-            float multiplier = (sPtr[j][1] / 255.0f) * (sPtr[j][1] / 255.0f);
-            float val = sPtr[j][2] * (1.0f - multiplier);
-            // // pixel = V - 0.5S
-            // float val = sPtr[j][2] - 0.5f * sPtr[j][1];
+            // float multiplier = (sPtr[j][1] / 255.0f) * (sPtr[j][1] / 255.0f);
+            // float val = sPtr[j][2] * (1.0f - multiplier);
+
+            // pixel = V - 0.5S
+            float val = sPtr[j][2] - 0.5f * sPtr[j][1];
             val = (val < 0) ? 0 : val; // clamp values
             dPtr[j] = (uchar)val;
         }
@@ -85,22 +185,22 @@ uchar kmeans_threshold(cv::Mat &src)
         // for every histogram bin (intensity level)
         for (int j = 0; j < 256; j++)
         {
-            if (hist[i] == 0)
+            if (hist[j] == 0)
                 continue; // skip empty bins
 
             // 1D distance metric
-            float d1 = std::abs(i - m1);
-            float d2 = std::abs(i - m2);
+            float d1 = std::abs(j - m1);
+            float d2 = std::abs(j - m2);
 
             if (d1 < d2) // closer to m1
             {
-                sum1 += i * hist[i]; // Sum of all pixel values
-                count1 += hist[i];   // Total count
+                sum1 += j * hist[j]; // Sum of all pixel values
+                count1 += hist[j];   // Total count
             }
             else // closer to m2
             {
-                sum2 += i * hist[i];
-                count2 += hist[i];
+                sum2 += j * hist[j];
+                count2 += hist[j];
             }
         }
 
@@ -129,9 +229,10 @@ uchar kmeans_threshold(cv::Mat &src)
 int main(int argc, char *argv[])
 {
     cv::VideoCapture *capdev = nullptr;
-    cv::Mat src, dst;             // initial RGB frame and final binary image
+    cv::Mat src, bin, dst;        // initial RGB frame, initial binary image, and final binary image
     cv::Mat hsv, blur, intensity; // hsv, Gaussian blur, saturation darkened image
-    bool image_mode = false;      // default is video mode
+    cv::Mat clean, vis;
+    bool image_mode = false; // default is video mode
     char *img_filepath = nullptr;
 
     // used for saving the output image
@@ -152,7 +253,7 @@ int main(int argc, char *argv[])
     }
 
     // initialize the source (camera or image)
-    if (image_mode)
+    if (image_mode) // open the image
     {
         src = cv::imread(img_filepath);
         if (src.empty())
@@ -161,25 +262,15 @@ int main(int argc, char *argv[])
             return -1;
         }
     }
-    else
+    else // open the video device (0 - default camera)
     {
-        // open the video device (0 uses the default camera on the device)
         capdev = new cv::VideoCapture(0);
         if (!capdev->isOpened())
         {
-            printf("Unable to open video device\n");
+            printf("Unable to open camera device\n");
             return (-1);
         }
-
-        // get size properties of the image
-        cv::Size refS((int)capdev->get(cv::CAP_PROP_FRAME_WIDTH),
-                      (int)capdev->get(cv::CAP_PROP_FRAME_HEIGHT));
-        printf("Expected size: %d x %d\n", refS.width, refS.height);
     }
-
-    cv::namedWindow("Input", cv::WINDOW_AUTOSIZE);            // original video feed
-    cv::namedWindow("Intensity Output", cv::WINDOW_AUTOSIZE); // intensity (saturation darkened) feed
-    cv::namedWindow("Binary Output", cv::WINDOW_AUTOSIZE);    // binary image feed
 
     for (;;) // infinite loop until break
     {
@@ -194,6 +285,8 @@ int main(int argc, char *argv[])
             }
         }
 
+        src.copyTo(vis); // create a new visualization screen
+
         // applies a 5x5 Gaussian blur and converts the image to HSV
         cv::GaussianBlur(src, blur, cv::Size(5, 5), 0);
         cv::cvtColor(blur, hsv, cv::COLOR_BGR2HSV);
@@ -205,16 +298,22 @@ int main(int argc, char *argv[])
         // uchar threshold = 100; // simple constant threshold for testing
 
         // create a binary image using a threshold
-        binImage(intensity, threshold, dst);
+        binImage(intensity, threshold, bin);
 
         // 5x5 kernel for the morphological operations
         cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
-        cv::morphologyEx(dst, dst, cv::MORPH_OPEN, element);  // remove noise
+        cv::morphologyEx(bin, dst, cv::MORPH_OPEN, element);  // remove noise
         cv::morphologyEx(dst, dst, cv::MORPH_CLOSE, element); // remove holes
 
-        cv::imshow("Input", src);
-        cv::imshow("Intensity Output", intensity);
-        cv::imshow("Binary Output", dst);
+        cv::Mat region_map;
+        std::vector<Region> regions = findRegions(dst, region_map, vis, 500); // min object area = 500
+
+        // draw results
+        cv::imshow("Regions", region_map); // colorful segmented image
+        // cv::imshow("Input", src);                  // original src
+        cv::imshow("Intensity Output", intensity); // greyscale
+        cv::imshow("Binary Output", dst);          // cleaned up binary image
+        cv::imshow("Bounding Box", vis);           // color image with bounding box and features
 
         // see if there is a waiting keystroke
         char key = cv::waitKey(1);
