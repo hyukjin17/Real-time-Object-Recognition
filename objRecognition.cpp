@@ -26,6 +26,101 @@ struct Region
     cv::Vec3b color;
 };
 
+// Computes features for a specific region and draws the visualization
+// Input: binary image mask with a single segmented region (white object on black background), region centroid
+// Output: overlays all the features onto display_dst image
+RegionFeatures compute_region_features(const cv::Mat &region_mask, const cv::Point2d centroid, cv::Mat &display_dst)
+{
+    RegionFeatures features;
+
+    // calculate moments
+    // true = binary image (treat non-zero pixels as 1)
+    cv::Moments m = cv::moments(region_mask, true);
+
+    // draw centroid
+    features.centroid = centroid;
+    cv::circle(display_dst, features.centroid, 5, cv::Scalar(0, 255, 0), -1); // green center dot
+
+    // calculate orientation (axis of least central moment)
+    // 0.5 * atan2(2 * mu11, mu20 - mu02)
+    double theta = 0.5 * std::atan2(2 * m.mu11, m.mu20 - m.mu02); // angle in radians
+    features.orientation = theta * (180.0 / CV_PI);               // convert to degrees
+
+    // visualize axis of least moment of inertia
+    // draw a line through the centroid along the orientation angle
+    double cos_t = std::cos(theta);
+    double sin_t = std::sin(theta);
+    cv::Point2d major_axis(cos_t, sin_t);  // major axis vector
+    cv::Point2d minor_axis(-sin_t, cos_t); // minor axis vector
+
+    double line_len = 100.0; // length of the axis line
+    cv::line(display_dst, features.centroid - major_axis * line_len,
+             features.centroid + major_axis * line_len, cv::Scalar(0, 0, 255), 2); // red major axis line
+    cv::line(display_dst, features.centroid - minor_axis * (line_len * 0.3),
+             features.centroid + minor_axis * (line_len * 0.3), cv::Scalar(0, 0, 255), 2); // red minor axis line
+
+    // compute the oriented bounding box
+    std::vector<cv::Point> points;
+    cv::findNonZero(region_mask, points); // finds every non-zero pixel in the region mask
+    // initialize 4 extremes for the bounding box
+    double max_pos_x = -1e9;
+    double max_neg_x = 1e9;
+    double max_pos_y = -1e9;
+    double max_neg_y = 1e9;
+    cv::Point p1, p2, p3, p4; // corner points
+
+    // finds the furthest points from the 2 axes
+    for (const auto &p : points)
+    {
+        // vector from Centroid to Point
+        double vec_x = p.x - features.centroid.x;
+        double vec_y = p.y - features.centroid.y;
+        // find perpendicular distance (dot product with normal vectors)
+        double dist_x = (vec_x * major_axis.x) + (vec_y * major_axis.y);
+        double dist_y = (vec_x * minor_axis.x) + (vec_y * minor_axis.y);
+
+        // check for new extremes
+        if (dist_x > max_pos_x)
+            max_pos_x = dist_x;
+        if (dist_x < max_neg_x)
+            max_neg_x = dist_x;
+        if (dist_y > max_pos_y)
+            max_pos_y = dist_y;
+        if (dist_y < max_neg_y)
+            max_neg_y = dist_y;
+    }
+    // 4 corners of the box
+    p1 = features.centroid + (major_axis * max_neg_x) + (minor_axis * max_neg_y);
+    p2 = features.centroid + (major_axis * max_pos_x) + (minor_axis * max_neg_y);
+    p3 = features.centroid + (major_axis * max_pos_x) + (minor_axis * max_pos_y);
+    p4 = features.centroid + (major_axis * max_neg_x) + (minor_axis * max_pos_y);
+    // draw the oriented bounding box using the 4 corners
+    cv::line(display_dst, p1, p2, cv::Scalar(255, 0, 0), 2);
+    cv::line(display_dst, p2, p3, cv::Scalar(255, 0, 0), 2);
+    cv::line(display_dst, p3, p4, cv::Scalar(255, 0, 0), 2);
+    cv::line(display_dst, p4, p1, cv::Scalar(255, 0, 0), 2);
+
+    // calculate bbox aspect ratio (height/width ratio)
+    double width = max_pos_x - max_neg_x;
+    double height = max_pos_y - max_neg_y;
+    if (width < height) // make sure the ratio is between (0, 1]
+        features.aspect_ratio = width / height;
+    else
+        features.aspect_ratio = height / width;
+
+    // calculate % filled (object area / bbox area)
+    double box_area = width * height;
+    features.percent_filled = (box_area > 0) ? (m.m00 / box_area) : 0.0;
+
+    // overlay % filled and aspect ratio for every object for visualization and testing
+    char text[100];
+    snprintf(text, sizeof(text), "Fill: %.2f / AR: %.2f", features.percent_filled, features.aspect_ratio);
+    cv::putText(display_dst, text, features.centroid + cv::Point2d(20, 20),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 0), 2);
+
+    return features;
+}
+
 // Global color palette (so colors don't flicker/change randomly every frame)
 std::vector<cv::Vec3b> color_palette;
 
@@ -52,7 +147,7 @@ bool compareRegionsByArea(const Region &a, const Region &b)
  * Filters out small regions and regions touching the border, and visualizes the remaining ones
  * Returns a list of valid Regions sorted by size (largest first)
  */
-std::vector<Region> findRegions(cv::Mat &binary_img, cv::Mat &dst_colored, cv::Mat &features, int min_area)
+std::vector<Region> findRegions(const cv::Mat &binary_img, cv::Mat &dst_colored, cv::Mat &features, int min_area)
 {
     // initialize the color palette with 256 random colors
     init_colors();
