@@ -1,7 +1,7 @@
 /**
  * Hyuk Jin Chung
  * 2/16/2026
- * 
+ *
  * Displays live video and creates a segmented binary image (background/foreground)
  * Collects training data using user input and saves labeled feature vectors into a csv file
  * Can classify objects based on training data in real time
@@ -22,7 +22,9 @@ int main(int argc, char *argv[])
 
     // used for saving the output image
     int image_counter = 1;
-    char filename[256];
+    char bin_filename[256];
+    char reg_filename[256];
+    char box_filename[256];
 
     // parse image filepath if exists
     for (int i = 1; i < argc; i++)
@@ -47,7 +49,7 @@ int main(int argc, char *argv[])
             return -1;
         }
     }
-    else // open the video device (0 - default camera)
+    else // open the video device (0 -> default camera)
     {
         capdev = new cv::VideoCapture(0);
         if (!capdev->isOpened())
@@ -106,10 +108,14 @@ int main(int argc, char *argv[])
             break;
         else if (key == 's')
         {
-            // save binary image result if 's' is pressed
-            snprintf(filename, sizeof(filename), "binary_result%03d.jpg", image_counter);
-            cv::imwrite(filename, dst);
-            printf("Saved %s\n", filename);
+            // save images if 's' is pressed
+            snprintf(bin_filename, sizeof(bin_filename), "binary_result%03d.jpg", image_counter);
+            cv::imwrite(bin_filename, dst); // binary image
+            snprintf(reg_filename, sizeof(reg_filename), "regions_result%03d.jpg", image_counter);
+            cv::imwrite(reg_filename, region_map); // colorful region map
+            snprintf(box_filename, sizeof(box_filename), "bbox_result%03d.jpg", image_counter);
+            cv::imwrite(box_filename, vis); // bounding box and axis image
+            printf("Saved %s, %s, %s\n", bin_filename, reg_filename, box_filename);
         }
     }
 
