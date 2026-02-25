@@ -5,6 +5,7 @@
  * Functions to preprocess and segment the image into valid regions
  * Image is converted into a binary image using a dynamic threshold
  * Binary image is used to segment the image into multiple valid regions with different colors
+ * Scale/translation/rotation invariant features are extracted from each region
  */
 
 #pragma once
@@ -19,6 +20,7 @@ struct RegionFeatures
     double orientation;    // Angle in degrees (0-180)
     double percent_filled; // Ratio of object area to bounding box area
     double aspect_ratio;   // Ratio of width/height (always stays between 0 and 1)
+    double hu_moments[7];  // 7 invariant Hu moments
 };
 
 // A struct to hold region data for recognition later

@@ -1,10 +1,11 @@
 /**
  * Hyuk Jin Chung
  * 2/16/2026
- * 
+ *
  * Functions to preprocess and segment the image into valid regions
  * Image is converted into a binary image using a dynamic threshold
  * Binary image is used to segment the image into multiple valid regions with different colors
+ * Scale/translation/rotation invariant features are extracted from each region
  */
 
 #include "features.hpp"
@@ -212,6 +213,18 @@ RegionFeatures compute_region_features(const cv::Mat &region_mask, const cv::Poi
     // calculate % filled (object area / bbox area)
     double box_area = width * height;
     features.percent_filled = (box_area > 0) ? (m.m00 / box_area) : 0.0;
+
+    // calculate Hu moments (scale/rotation invariant features)
+    // OpenCV computes 7 Hu moments based on normalized central moments
+    cv::HuMoments(m, features.hu_moments);
+
+    // log-transform Hu moments to make them normalized (convert exponential scale to linear)
+    for (int i = 0; i < 7; i++)
+    {
+        // sign is flipped to convert to positive values, magnitude is log_10
+        // copysign preserves the sign and the entire value is multiplied by -1
+        features.hu_moments[i] = -1 * copysign(1.0, features.hu_moments[i]) * log10(abs(features.hu_moments[i]));
+    }
 
     // overlay % filled and aspect ratio for every object for visualization and testing
     char text[100];
