@@ -22,8 +22,19 @@ void save_to_db(const std::string &filename, const std::string &label, const Reg
         file << f.percent_filled << ",";
         file << f.aspect_ratio << ",";
         file << f.hu_moments[0] << ",";
-        file << f.hu_moments[1] << "\n"; // only using the first 2 Hu moments
+        file << f.hu_moments[1]; // only using the first 2 Hu moments
 
+        // add DNN embeddings
+        if (!f.dnn_embedding.empty())
+        {
+            // ResNet18 outputs a 512 vector of 32-bit floats (CV_32F)
+            const float *ptr = f.dnn_embedding.ptr<float>(0);
+            for (int i = 0; i < f.dnn_embedding.cols; i++)
+            {
+                file << "," << ptr[i];
+            }
+        }
+        file << "\n";
         file.close();
         printf("Saved '%s' to database\n", label.c_str());
     }
@@ -57,10 +68,21 @@ void load_db(const std::string &filename)
         TrainingData data;
 
         std::getline(ss, data.label, ','); // reads the label first
+        for (int i = 0; i < 4; i++)
+        {
+            std::getline(ss, segment, ',');
+            data.feature_vector.push_back(std::stof(segment)); // adds the next 4 numbers into the feature vector
+        }
+
+        cv::Mat embedding = cv::Mat::zeros(1, 512, CV_32F);
+        float *ptr = embedding.ptr<float>(0);
+        int index = 0;
+        
         while (std::getline(ss, segment, ','))
         {
-            data.feature_vector.push_back(std::stof(segment)); // adds each subsequent number into the feature vector
+            ptr[index++] = std::stof(segment); // add the rest of the values into the DNN embedding
         }
+        data.dnn_embedding = embedding.clone(); // deep copy of the embedding
 
         object_db.push_back(data); // saves the TrainingData object into the DB
     }

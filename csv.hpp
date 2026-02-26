@@ -15,7 +15,8 @@
 // A struct to hold a labeled training example
 struct TrainingData {
     std::string label;
-    std::vector<float> feature_vector;
+    std::vector<float> feature_vector; // for the feature-based classification
+    cv::Mat dnn_embedding;             // for the CNN one-shot classification
 };
 
 // global database of known objects
