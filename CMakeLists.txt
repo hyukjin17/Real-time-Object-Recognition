@@ -6,7 +6,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(OpenCV REQUIRED)
 
-add_executable(objRec objRecognition.cpp)
+add_executable(objRec objRecognition.cpp features.cpp csv.cpp)
 
 target_include_directories(objRec PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(objRec PRIVATE ${OpenCV_LIBS})
