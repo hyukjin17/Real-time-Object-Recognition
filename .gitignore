@@ -34,3 +34,6 @@ project1
 
 # ---- csv ----
 *.csv
+
+# ---- onnx ----
+*.onnx
