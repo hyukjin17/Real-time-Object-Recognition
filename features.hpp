@@ -21,6 +21,12 @@ struct RegionFeatures
     double percent_filled; // Ratio of object area to bounding box area
     double aspect_ratio;   // Ratio of width/height (always stays between 0 and 1)
     double hu_moments[7];  // 7 invariant Hu moments
+
+    // fields for DNN embeddings
+    double theta_rad;      // Radians (for the rotation matrix)
+    double minB1, maxB1;   // Major axis bounds (width)
+    double minB2, maxB2;   // Minor axis bounds (height)
+    cv::Mat dnn_embedding; // The 1x512 feature vector from ResNet18
 };
 
 // A struct to hold region data for recognition later

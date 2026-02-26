@@ -146,6 +146,7 @@ RegionFeatures compute_region_features(const cv::Mat &region_mask, const cv::Poi
     // calculate orientation (axis of least central moment)
     // 0.5 * atan2(2 * mu11, mu20 - mu02)
     double theta = 0.5 * std::atan2(2 * m.mu11, m.mu20 - m.mu02); // angle in radians
+    features.theta_rad = theta;                                   // save angle in radiands to features
     features.orientation = theta * (180.0 / CV_PI);               // convert to degrees
 
     // visualize axis of least moment of inertia
@@ -201,6 +202,12 @@ RegionFeatures compute_region_features(const cv::Mat &region_mask, const cv::Poi
     cv::line(display_dst, p2, p3, cv::Scalar(255, 0, 0), 2);
     cv::line(display_dst, p3, p4, cv::Scalar(255, 0, 0), 2);
     cv::line(display_dst, p4, p1, cv::Scalar(255, 0, 0), 2);
+
+    // save the bounds to features
+    features.minB1 = max_neg_x;
+    features.maxB1 = max_pos_x;
+    features.minB2 = max_neg_y;
+    features.maxB2 = max_pos_y;
 
     // calculate bbox aspect ratio (height/width ratio)
     double width = max_pos_x - max_neg_x;
