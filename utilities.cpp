@@ -3,10 +3,8 @@
 
   Set of utility functions for computing features and embeddings
 */
-#include <cstdio>
-#include <cstring>
-#include "opencv2/opencv.hpp"
-#include "opencv2/dnn.hpp"
+
+#include "utilities.hpp"
 // #include "features.h"
 // #include "vision.h"
 
