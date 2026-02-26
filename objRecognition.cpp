@@ -11,6 +11,7 @@
 #include <map>
 #include "features.hpp"
 #include "csv.hpp"
+#include "utilities.hpp"
 
 // global database of known objects
 std::vector<TrainingData> object_db;
@@ -20,6 +21,54 @@ std::vector<float> db_stdevs;
 std::vector<cv::Vec3b> color_palette;
 // Map: Actual Label -> (Predicted Label -> Count)
 std::map<std::string, std::map<std::string, int>> confusion_matrix;
+
+// Compares a target embedding to the database using SSD
+std::string classify_dnn(const cv::Mat &target_embedding)
+{
+    if (object_db.empty() || target_embedding.empty())
+        return "Unknown";
+
+    std::string best_label = "Unknown";
+    double min_dist = 1e9; // start with a huge distance
+
+    // pre-calculate the magnitude of the target embedding
+    double norm_target = cv::norm(target_embedding, cv::NORM_L2);
+    // avoid division by zero
+    if (norm_target == 0.0)
+        return "Unknown";
+
+    for (const auto &obj : object_db)
+    {
+        if (obj.dnn_embedding.empty())
+            continue; // skip if no DNN data
+
+        // calculate the magnitude of the object embedding and skip if its 0
+        double norm_db = cv::norm(obj.dnn_embedding, cv::NORM_L2);
+        if (norm_db == 0.0)
+            continue;
+
+        // dot product between target embedding and object embedding
+        double dot_product = target_embedding.dot(obj.dnn_embedding);
+        // calculate cosine distance (0 = identical)
+        double cos_distance = 1.0 - (dot_product / (norm_target * norm_db));
+
+        // update closest label
+        if (cos_distance < min_dist)
+        {
+            min_dist = cos_distance;
+            best_label = obj.label;
+        }
+    }
+
+    // sets a threshold for a distance
+    // if the closest match is still too far, label as "Unknown"
+    if (min_dist > 0.25)
+    {
+        return "Unknown";
+    }
+
+    return best_label;
+}
 
 // Returns the label of the nearest neighbor
 std::string classify_object(const RegionFeatures &f)
@@ -60,9 +109,9 @@ std::string classify_object(const RegionFeatures &f)
         }
     }
 
-    // set a threshold for a distance
+    // sets a threshold for a distance
     // if the closest match is still too far, label as "Unknown"
-    if (min_dist > 1.0f)
+    if (min_dist > 2.0f)
     {
         return "Unknown";
     }
@@ -86,7 +135,16 @@ int main(int argc, char *argv[])
     char box_filename[256];
 
     bool classification_mode = false;
+    bool use_dnn = false;       // false = feature-based classification, true = DNN classification
     load_db("object_data.csv"); // load existing data on startup (if exists)
+
+    // load the DNN embeddingsfrom the file
+    cv::dnn::Net net = cv::dnn::readNetFromONNX("resnet18-v2-7.onnx");
+    if (net.empty())
+    {
+        printf("Error: Could not load ResNet18 model\n");
+        return -1;
+    }
 
     // parse image filepath if exists
     for (int i = 1; i < argc; i++)
@@ -149,19 +207,49 @@ int main(int argc, char *argv[])
         // create a binary image using a threshold
         binImage(intensity, threshold, bin);
 
-        // 5x5 kernel for the morphological operations
-        cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        // 7x7 kernel for the morphological operations
+        cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7, 7));
         cv::morphologyEx(bin, dst, cv::MORPH_OPEN, element);  // remove noise
         cv::morphologyEx(dst, dst, cv::MORPH_CLOSE, element); // remove holes
 
         cv::Mat region_map;
         std::vector<Region> regions = findRegions(dst, region_map, vis, 500); // min object area = 500
 
+        // extract embeddings for every region
+        for (auto &region : regions)
+        {
+            cv::Mat roi;
+            // use the utility function to extract embeddings
+            prepEmbeddingImage(src, roi,
+                               region.features.centroid.x, region.features.centroid.y,
+                               region.features.theta_rad,
+                               region.features.minB1, region.features.maxB1,
+                               region.features.minB2, region.features.maxB2,
+                               0);
+
+            cv::Mat embedding;
+            getEmbedding(roi, embedding, net, 0);
+
+            // embeddings are stores within the Region for training and classification
+            // creates a deep copy
+            region.features.dnn_embedding = embedding.clone();
+        }
+
         if (classification_mode && !object_db.empty())
         {
+            // text overlay to show classification method
+            std::string mode_text = use_dnn ? "Mode: DNN (ResNet18)" : "Mode: Baseline (Feature-based)";
+            cv::putText(vis, mode_text, cv::Point(10, 30),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 0), 2);
+
             for (auto &region : regions)
             {
-                std::string name = classify_object(region.features);
+                std::string name;
+
+                if (use_dnn)
+                    name = classify_dnn(region.features.dnn_embedding);
+                else
+                    name = classify_object(region.features);
 
                 cv::putText(vis, name, region.centroid - cv::Point2d(50, 50),
                             cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2);
@@ -172,6 +260,7 @@ int main(int argc, char *argv[])
         cv::imshow("Regions", region_map); // colorful segmented image
         // cv::imshow("Input", src);                  // original src
         cv::imshow("Intensity Output", intensity); // greyscale
+        cv::imshow("Binary Before Cleanup", bin);  // binary image before cleanup
         cv::imshow("Binary Output", dst);          // cleaned up binary image
         cv::imshow("Bounding Box", vis);           // color image with bounding box and features
 
@@ -195,6 +284,11 @@ int main(int argc, char *argv[])
             classification_mode = !classification_mode;
             printf("Classification Mode: %s\n", classification_mode ? "ON" : "OFF");
         }
+        else if (key == 'm')
+        {
+            use_dnn = !use_dnn;
+            printf("Classifier: %s\n", use_dnn ? "DNN (ResNet18)" : "Baseline (Features)");
+        }
         else if (key == 'n') // save new training data
         {
             if (regions.size() == 1) // only save data if there is one object on screen
@@ -217,11 +311,19 @@ int main(int argc, char *argv[])
             if (regions.size() == 1)
             {
                 // classify object on screen
-                std::string predicted_label = classify_object(regions[0].features);
+                std::string predicted_label;
+                if (use_dnn)
+                {
+                    predicted_label = classify_dnn(regions[0].features.dnn_embedding);
+                }
+                else
+                {
+                    predicted_label = classify_object(regions[0].features);
+                }
 
                 // prompt user for the actual label
                 printf("\n--- EVALUATION MODE ---\n");
-                printf("System predicted: [%s]\n", predicted_label.c_str());
+                printf("System predicted: [%s] using %s\n", predicted_label.c_str(), use_dnn ? "DNN" : "Baseline");
                 printf("Enter ACTUAL label: ");
 
                 std::string actual_label;
