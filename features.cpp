@@ -141,7 +141,7 @@ RegionFeatures compute_region_features(const cv::Mat &region_mask, const cv::Poi
 
     // draw centroid
     features.centroid = centroid;
-    cv::circle(display_dst, features.centroid, 5, cv::Scalar(0, 255, 0), -1); // green center dot
+    cv::circle(display_dst, features.centroid, 7, cv::Scalar(0, 255, 0), -1); // green center dot
 
     // calculate orientation (axis of least central moment)
     // 0.5 * atan2(2 * mu11, mu20 - mu02)
@@ -230,7 +230,7 @@ RegionFeatures compute_region_features(const cv::Mat &region_mask, const cv::Poi
     char text[100];
     snprintf(text, sizeof(text), "Fill: %.2f / AR: %.2f", features.percent_filled, features.aspect_ratio);
     cv::putText(display_dst, text, features.centroid + cv::Point2d(20, 20),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 0), 2);
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
 
     return features;
 }
@@ -290,22 +290,22 @@ std::vector<Region> findRegions(const cv::Mat &binary_img, cv::Mat &dst_colored,
         // store region data
         Region r;
         r.id = region_count++; // post-increment the valid region counter
+        r.original_id = i;
         r.area = area;
         r.color = color_palette[i % 255]; // assign color based on region ID (modulo in case there are > 256 regions)
-
-        valid_regions.push_back(r);
+        // compute centroid
+        r.centroid = cv::Point2d(centroids.at<double>(i, 0), centroids.at<double>(i, 1));
 
         // create a region mask just for this region to be passed into the feature extractor
         cv::Mat region_mask = (labels == i);
         // creates a binary image where only pixels with matching region_id are white (on a black background)
 
-        // compute centroid
-        cv::Point2d centroid = cv::Point2d(centroids.at<double>(i, 0), centroids.at<double>(i, 1));
-
         // compute features for every valid region
-        RegionFeatures feats = compute_region_features(region_mask, centroid, features);
+        r.features = compute_region_features(region_mask, r.centroid, features);
 
         dst_colored.setTo(r.color, region_mask); // use the region mask to color the region
+
+        valid_regions.push_back(r);
     }
 
     // sort regions by area (descending order, largest first)
