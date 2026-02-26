@@ -31,3 +31,6 @@ project1
 # ---- Images ----
 *.jpg
 *.png
+
+# ---- csv ----
+*.csv
