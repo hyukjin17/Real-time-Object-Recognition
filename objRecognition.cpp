@@ -23,7 +23,7 @@ std::vector<cv::Vec3b> color_palette;
 std::map<std::string, std::map<std::string, int>> confusion_matrix;
 
 // Compares a target embedding to the database using SSD
-std::string classify_dnn(const cv::Mat &target_embedding)
+std::string classify_dnn(const cv::Mat &target_embedding, double &distance)
 {
     if (object_db.empty() || target_embedding.empty())
         return "Unknown";
@@ -60,6 +60,8 @@ std::string classify_dnn(const cv::Mat &target_embedding)
         }
     }
 
+    distance = min_dist;
+
     // sets a threshold for a distance
     // if the closest match is still too far, label as "Unknown"
     if (min_dist > 0.25)
@@ -71,7 +73,7 @@ std::string classify_dnn(const cv::Mat &target_embedding)
 }
 
 // Returns the label of the nearest neighbor
-std::string classify_object(const RegionFeatures &f)
+std::string classify_object(const RegionFeatures &f, double &distance)
 {
     if (object_db.empty())
         return "Unknown";
@@ -108,6 +110,8 @@ std::string classify_object(const RegionFeatures &f)
             best_label = obj.label;
         }
     }
+
+    distance = min_dist;
 
     // sets a threshold for a distance
     // if the closest match is still too far, label as "Unknown"
@@ -245,13 +249,18 @@ int main(int argc, char *argv[])
             for (auto &region : regions)
             {
                 std::string name;
+                double distance;
 
                 if (use_dnn)
-                    name = classify_dnn(region.features.dnn_embedding);
+                    name = classify_dnn(region.features.dnn_embedding, distance);
                 else
-                    name = classify_object(region.features);
+                    name = classify_object(region.features, distance);
 
                 cv::putText(vis, name, region.centroid - cv::Point2d(50, 50),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2);
+                char dist[100];
+                snprintf(dist, sizeof(dist), "Distance: %.2f", distance);
+                cv::putText(vis, dist, region.centroid - cv::Point2d(50, 25),
                             cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2);
             }
         }
@@ -310,15 +319,16 @@ int main(int argc, char *argv[])
         {
             if (regions.size() == 1)
             {
+                double dist;
                 // classify object on screen
                 std::string predicted_label;
                 if (use_dnn)
                 {
-                    predicted_label = classify_dnn(regions[0].features.dnn_embedding);
+                    predicted_label = classify_dnn(regions[0].features.dnn_embedding, dist);
                 }
                 else
                 {
-                    predicted_label = classify_object(regions[0].features);
+                    predicted_label = classify_object(regions[0].features, dist);
                 }
 
                 // prompt user for the actual label
